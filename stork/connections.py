@@ -138,14 +138,23 @@ class IdentityConnection(BaseConnection):
                 wshp[d] = 1
             wshp = tuple(wshp)
 
-        self.weights = Parameter(torch.randn(
+        self.weight = Parameter(torch.randn(
             wshp), requires_grad=requires_grad)
         if bias:
             self.bias = Parameter(torch.randn(
                 wshp), requires_grad=requires_grad)
 
+    @property
+    def op(self):
+        return self
+
+    @property
+    def weights(self):
+        # ALIAS
+        return self.weight
+
     def get_weights(self):
-        return self.weights
+        return self.weight
 
     def get_regularizer_loss(self):
         reg_loss = torch.tensor(0.0, device=self.device)
@@ -155,16 +164,16 @@ class IdentityConnection(BaseConnection):
 
     def apply_constraints(self):
         for const in self.constraints:
-            const.apply(self.weights)
+            const.apply(self.weight)
 
     def forward(self):
         preact = self.src.out
         if self.bias is None:
             self.dst.scale_and_add_to_state(
-                self.weight_scale, self.target, self.weights * preact)
+                self.weight_scale, self.target, self.weight * preact)
         else:
             self.dst.scale_and_add_to_state(
-                self.weight_scale, self.target, self.weights * preact + self.bias)
+                self.weight_scale, self.target, self.weight * preact + self.bias)
 
     def propagate(self):
         self.forward()

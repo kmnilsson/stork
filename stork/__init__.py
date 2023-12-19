@@ -12,6 +12,7 @@ from . import monitors
 from . import optimizers
 from . import layers
 from . import initializers
+from . import datasets
 
 __version__ = "0.1.0"
 

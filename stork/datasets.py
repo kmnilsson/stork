@@ -10,8 +10,11 @@ import string
 import torch
 import torch.utils.data
 
-
+import os
 import threading
+import soundfile as sf
+
+from . import utils
 
 lock = threading.Lock()
 
@@ -1043,3 +1046,240 @@ class TextDataset(torch.utils.data.Dataset):
         y[:-1] = X[1:]
 
         return X, y
+    
+    
+# Experimental datasets for raw audio processing
+
+class RawAudioDataset:
+    """ Provides a baseclass for audio datasets. 
+
+    Args:
+        nb_steps: The number of time steps to return
+        time_step: The size of the assumed time step in seconds
+        nb_fft: The number of FFT channels to compute
+        nb_filt: The number of mel-spaced filters to compute in the filter bank
+        frame_size: The window size in seconds to compute FFT over
+        pre_emphasis: A pre-emphasis parameter for preprocessing
+        standardize (bool): Whether to standardize the filter banks
+        diffcode (bool): Whether to return differences of consecutive frames
+        binarize (bool): Whether to return binary values 0 and 1 
+        resize (bool): Whether to resize the data to all have the same shape for easy stacking
+        repeat_last_frame (bool): Whether to repeat the last frame instead of zero padding
+
+    This baseclass implements a rudimentary conversion of audio data to a mel-spaced spectrum to be used as raw
+    input to network models.
+    """
+
+    def __init__(self, nb_steps, time_step=10e-3, nb_fft=512, nb_filt=40, frame_size=25e-3, pre_emphasis=0.95,
+                 standardize=True, diffcode=False, binarize=False, resize=True, repeat_last_frame=True):
+
+        self.nb_fft = nb_fft
+        self.nb_filt = nb_filt
+        self.frame_stride = time_step
+        self.frame_size = frame_size
+        self.pre_emphasis = pre_emphasis
+
+        self.standardize = standardize
+        self.diffcode = diffcode
+        self.binarize = binarize
+        self.resize = resize
+        self.repeat_last_frame = repeat_last_frame
+
+        self.length = nb_steps
+        self.data = []
+        self.signal_lengths = []
+
+    def recursive_walk(self, rootdir):
+        """
+        Yields:
+            str: All filnames in rootdir, recursively.
+        """
+        for r, dirs, files in os.walk(rootdir):
+            for f in files:
+                yield os.path.join(r, f)
+
+    def get_signal(self, fname):
+        """ Returns audio data and sampling rate from audio file. """
+        signal, sample_rate = sf.read(fname)
+        signal = signal.astype('float32')
+        return signal, sample_rate
+
+    def get_feature(self, fname):
+        """ Compute mel-spaced feature from audio data file. 
+
+        Args:
+            fname (str): The file name of the audio file to operate on
+
+        Returns: 
+            An audio feature
+        """
+
+        # Code mostly taken from
+        # https://haythamfayek.com/2016/04/21/speech-processing-for-machine-learning.html
+
+        # Load from file
+        signal, sample_rate = self.get_signal(fname)
+
+        # Pre-Emphasis
+        emphasized_signal = np.append(signal[0], signal[1:] - self.pre_emphasis * signal[:-1])
+
+        # Framing
+        frame_length, frame_step = self.frame_size * sample_rate, self.frame_stride * sample_rate  # Convert from seconds to samples
+        signal_length = len(emphasized_signal)
+        frame_length = int(round(frame_length))
+        frame_step = int(round(frame_step))
+        num_frames = int(np.ceil(
+            float(np.abs(signal_length - frame_length)) / frame_step))  # Make sure that we have at least 1 frame
+
+        pad_signal_length = num_frames * frame_step + frame_length
+        z = np.zeros((pad_signal_length - signal_length))
+        pad_signal = np.append(emphasized_signal,
+                               z)  # Pad Signal to make sure that all frames have equal number of samples without truncating any samples from the original signal
+
+        indices = np.tile(np.arange(0, frame_length), (num_frames, 1)) + np.tile(
+            np.arange(0, num_frames * frame_step, frame_step), (frame_length, 1)).T
+        frames = pad_signal[indices.astype(np.int32, copy=False)]
+
+        # Apply hamming window
+        frames *= np.hamming(frame_length)
+
+        # Fourier transform data
+        mag_frames = np.absolute(np.fft.rfft(frames, self.nb_fft))  # Magnitude of the FFT
+        pow_frames = ((1.0 / self.nb_fft) * ((mag_frames) ** 2))  # Power Spectrum
+
+        # Apply filter banks
+        low_freq_mel = 0
+        high_freq_mel = (2595 * np.log10(1 + (sample_rate / 2) / 700))  # Convert Hz to Mel
+        mel_points = np.linspace(low_freq_mel, high_freq_mel, self.nb_filt + 2)  # Equally spaced in Mel scale
+        hz_points = (700 * (10 ** (mel_points / 2595) - 1))  # Convert Mel to Hz
+        fbin = np.floor((self.nb_fft + 1) * hz_points / sample_rate)
+
+        fbank = np.zeros((self.nb_filt, int(np.floor(self.nb_fft / 2 + 1))))
+        for m in range(1, self.nb_filt + 1):
+            f_m_minus = int(fbin[m - 1])  # left
+            f_m = int(fbin[m])  # center
+            f_m_plus = int(fbin[m + 1])  # right
+
+            for k in range(f_m_minus, f_m):
+                fbank[m - 1, k] = (k - fbin[m - 1]) / (fbin[m] - fbin[m - 1])
+            for k in range(f_m, f_m_plus):
+                fbank[m - 1, k] = (fbin[m + 1] - k) / (fbin[m + 1] - fbin[m])
+
+        filter_banks = np.dot(pow_frames, fbank.T)
+        filter_banks = np.where(filter_banks == 0, np.finfo(float).eps, filter_banks)  # Ensure numerical Stability
+
+        self.signal_lengths.append(len(filter_banks))
+        if self.resize:
+            fillstart = len(filter_banks)
+            filter_banks.resize(self.length, self.nb_filt)  # TODO find better solution for this
+
+            if fillstart <= self.length:
+                if self.repeat_last_frame: 
+                    filter_banks[fillstart:] = filter_banks[fillstart - 1]
+                else: # Fill with small but larger than zero value
+                    filter_banks[fillstart:] = 1e-9
+
+        # filter_banks = 20 * np.log10(filter_banks)  # dB
+        filter_banks = np.log10(filter_banks)  # dB
+
+
+        if self.standardize:
+            mean, std = np.mean(filter_banks), np.std(filter_banks)
+            filter_banks = (filter_banks - mean) / (std + np.finfo(float).eps)
+
+        if self.diffcode:
+            diff = np.diff(filter_banks, axis=0)
+            filter_banks = diff
+
+        if self.binarize:
+            filter_banks = 1.0 * (filter_banks > 0.0)
+
+        filter_banks = torch.from_numpy(filter_banks).float()
+        return filter_banks
+
+    def __len__(self):
+        return len(self.data)
+
+    def prepare_item(self, index):
+        raise NotImplemented
+
+    def __getitem__(self, index):
+        return self.data[index]
+
+    def cache(self, fname):
+        """ Save current data to cache file. """
+        utils.write_to_file(self.data, fname)
+
+    def load_cached(self, fname):
+        """ Load from cached data file. """
+        self.data = utils.load_from_file(fname)
+
+
+class RawHeidelbergDigits(RawAudioDataset):
+    """ Dataset adapter to work with the Heidelberg dataset 
+
+    Args:
+        dirname (str): The root directory where the raw Heidelberg digits dataset can be found
+        nb_steps (int): The number of steps to return
+        time_step (float): The time step size in seconds (default 10ms)
+        subset (list): List with file basenames belonging to the set
+        label (str): Which labels to use digit, speaker, or language
+        diffcode (bool): Whether to return difference between frames or frames
+        binarize (bool): Whether to return binary values 0 and 1 
+    """
+
+    def __init__(self, dirname, nb_steps, time_step=10e-3, subset=None, label='digit', diffcode=False, binarize=False,
+                 cache_fname=None, **kwargs):
+
+        super().__init__(nb_steps, time_step=time_step, diffcode=diffcode, binarize=binarize, **kwargs)
+
+        self.dirname = dirname
+        assert os.path.isdir(dirname), dirname
+        self.filelist = [k for k in self.recursive_walk(self.dirname)
+                         if k.endswith('.flac')]
+        print("Found {} flac files ...".format(len(self.filelist)))
+        assert len(self.filelist), "Found no '.flac' files!"
+        assert label in ["digit", "speaker", "language"], label
+        self.label = label
+
+        self.length = nb_steps
+        if diffcode:
+            self.length = nb_steps + 1
+
+        if subset is not None:
+            self.filelist = [fn for fn in self.filelist if os.path.basename(fn) in subset]
+            print("Selected {} flac files ...".format(len(self.filelist)))
+
+        if cache_fname is None:
+            self.load_data()
+        else:
+            try:
+                self.load_cached(cache_fname)
+                print("Finished loading {} cached data ...".format(len(self.data)))
+            except FileNotFoundError:
+                self.load_data()
+                self.cache(cache_fname)
+
+    def load_data(self):
+        self.data = [self.prepare_item(i) for i in range(len(self.filelist))]
+        print("Loaded %i data..." % (len(self.data)))
+
+    def parse_fname(self, fname):
+        bn = os.path.basename(fname)
+        bn = os.path.splitext(bn)[0]
+        tokens = bn.split("_")
+        lang, speaker, trial, digit = [t.split('-')[1] for t in tokens]
+        return lang, speaker, trial, digit
+
+    def prepare_item(self, index):
+        fn = self.filelist[index]
+        feat = self.get_feature(fn)
+        lang, speaker, trial, digit = self.parse_fname(fn)
+        if self.label == 'digit':
+            label = int(digit)
+            if lang == "english": label += 10
+        elif self.label == 'speaker':
+            raise NotImplemented
+        elif self.label == 'language':
+            raise NotImplemented
+        return feat, label
