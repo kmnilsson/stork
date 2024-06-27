@@ -4,6 +4,10 @@ import torch.nn.functional as F
 
 import numpy as np
 
+from torchmetrics.functional.regression.mse import mean_squared_error
+from torchmetrics.functional.regression.pearson import pearson_corrcoef
+from torchmetrics.functional.regression import spearman_corrcoef
+
 
 class LossStack:
 
@@ -310,6 +314,66 @@ class MeanSquareError(LossStack):
             loss_value = self.msqe_loss(
                 output*self.mask.expand_as(output), target*self.mask.expand_as(output))
         self.metrics = []
+        return loss_value
+
+    def predict(self, output):
+        return output  # here we just return the network output
+
+    def __call__(self, output, targets):
+        return self.compute_loss(output, targets)
+    
+    
+class SumOverTimeMSE(LossStack):
+
+    def __init__(self, time_dimension=1):
+        super().__init__()
+        self.mse_loss = nn.MSELoss()
+        self.time_dim = time_dimension
+
+    def get_metric_names(self):
+        return ["pcc", "srcc"]
+
+    def compute_loss(self, output, target):
+        """ Computes MSE loss between output and target. """
+        sot = torch.sum(output, self.time_dim)   # Sum over time
+        target = target.unsqueeze(1).float()    # Add a dimension and typecast        
+        
+        loss_value = self.mse_loss(sot, target)
+        pcc = pearson_corrcoef(sot, target)
+        srcc = spearman_corrcoef(sot, target)
+        
+        self.metrics = [pcc.item(),
+                        srcc.item()]
+        return loss_value
+
+    def predict(self, output):
+        return output  # here we just return the network output
+
+    def __call__(self, output, targets):
+        return self.compute_loss(output, targets)
+
+    
+class MeanOverTimeMSE(LossStack):
+
+    def __init__(self, time_dimension=1):
+        super().__init__()
+        self.mse_loss = nn.MSELoss()
+        self.time_dim = time_dimension
+
+    def get_metric_names(self):
+        return ["pcc", "srcc"]
+
+    def compute_loss(self, output, target):
+        """ Computes MSE loss between output and target. """
+        mot = torch.mean(output, self.time_dim) # Mean over time
+        target = target.unsqueeze(1).float()    # Add a dimension and typecast        
+        
+        loss_value = self.mse_loss(mot, target)
+        pcc = pearson_corrcoef(mot, target)
+        srcc = spearman_corrcoef(mot, target)
+        
+        self.metrics = [pcc.item(),
+                        srcc.item()]
         return loss_value
 
     def predict(self, output):

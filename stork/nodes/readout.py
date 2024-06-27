@@ -1,14 +1,30 @@
 import numpy as np
 import torch
 
+from torch.nn import Parameter
+
 from stork.nodes.base import CellGroup
 
 
 class ReadoutGroup(CellGroup):
-    def __init__(self, shape, tau_mem=10e-3, tau_syn=5e-3, weight_scale=1.0, initial_state=-1e-3, stateful=False):
+    def __init__(self,
+                 shape,
+                 tau_mem=10e-3,
+                 tau_syn=5e-3,
+                 weight_scale=1.0,
+                 initial_state=-1e-3,
+                 stateful=False,
+                 learn_tau_mem=False,
+                 learn_tau_syn=False,
+                 learn_tau_mem_hetero=False,
+                 learn_tau_syn_hetero=False):
         super().__init__(shape, stateful=stateful, name="Readout")
         self.tau_mem = tau_mem
         self.tau_syn = tau_syn
+        self.learn_tau_mem = learn_tau_mem
+        self.learn_tau_syn = learn_tau_syn
+        self.learn_tau_mem_hetero = learn_tau_mem_hetero
+        self.learn_tau_syn_hetero = learn_tau_syn_hetero
         self.store_output_seq = True
         self.initial_state = initial_state
         self.weight_scale = weight_scale

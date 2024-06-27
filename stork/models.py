@@ -4,6 +4,8 @@ import time
 import torch
 import torch.nn as nn
 
+from tqdm import tqdm
+
 import stork.nodes.base
 from . import generators
 from . import loss_stacks
@@ -251,7 +253,7 @@ class RecurrentSpikingModel(nn.Module):
         self.train(True)
         self.prepare_data(dataset)
         metrics = []
-        for local_X, local_y in self.data_generator(dataset, shuffle=shuffle):
+        for local_X, local_y in tqdm(self.data_generator(dataset, shuffle=shuffle)):
             output = self.forward_pass(local_X, cur_batch_size=len(local_X))
             total_loss = self.get_total_loss(output, local_y)
 
@@ -334,7 +336,7 @@ class RecurrentSpikingModel(nn.Module):
         self.hist_train = []
         self.hist_valid = []
         self.wall_clock_time = []
-        for ep in range(nb_epochs):
+        for ep in tqdm(range(nb_epochs)):
             t_start = time.time()
             self.train()
             ret_train = self.train_epoch(dataset)
@@ -354,6 +356,12 @@ class RecurrentSpikingModel(nn.Module):
                 print("%02i %s --%s t_iter=%.2f" % (
                     ep, self.get_metrics_string(ret_train), self.get_metrics_string(ret_valid, prefix="val_"), t_iter))
 
+            #for group in self.groups[2:-1]:
+            #    act = group.get_out_sequence()      # get output
+            #    cnt = torch.sum(act, dim=1)         # get spikecount
+            #    cnt = torch.mean(cnt, dim=(-2,-1))
+            #    print("Group", group, "mean spike-count:", torch.mean(cnt))
+        
         self.hist = np.concatenate(
             (np.array(self.hist_train), np.array(self.hist_valid)))
         self.fit_runs.append(self.hist)
@@ -528,3 +536,14 @@ class RecurrentSpikingModel(nn.Module):
         print("\n## Connections")
         for con in self.connections:
             print(con)
+
+
+    def run_single_step(self, x_input):
+        self.input_group.feed_data(x_input.unsqueeze(1))        # Add time dimension
+        stork.nodes.base.CellGroup.clk = 0                      # Set clock to 0 for single step
+    
+        self.evolve_all()
+        self.propagate_all()
+        self.execute_all()
+    
+        return self.output_group.get_out_sequence()[:, -1, :]   # Return last time step output

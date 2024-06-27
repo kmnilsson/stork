@@ -65,6 +65,10 @@ def get_lif_kernel(tau_mem=20e-3, tau_syn=10e-3, dt=1e-3):
         Array of length 10x of the longest time constant containing the filter kernel
 
     """
+    # Tentatively use mean values for this (initialization)
+    tau_mem = torch.mean(tau_mem).cpu().numpy()
+    tau_syn = torch.mean(tau_syn).cpu().numpy() 
+    
     tau_max = np.max((tau_mem, tau_syn))
     ts = np.arange(0, int(tau_max*10/dt))*dt
     n = len(ts)
@@ -86,3 +90,11 @@ def convlayer_size(nb_inputs, kernel_size, padding, stride):
     """
     res = ((np.array(nb_inputs) - kernel_size + 2 * padding) / stride) + 1
     return res
+
+
+def get_logspace_tau(tau_min, tau_max, shape):
+    """Get logspaced tau values along channel dimension
+    """
+    tau = np.logspace(np.log10(tau_min), np.log10(tau_max), shape[0])
+    tau = np.tile(tau, (shape[1],1)).T
+    return tau

@@ -45,7 +45,8 @@ def save_plots(fileprefix, extensions=["pdf", "png"], dpi=300):
 
 def plot_activity_snapshot(model, data=None, labels=None, pred=None, nb_samples=5, plot_groups=None, marker=".",
                            point_size=5, point_alpha=1.0, time_jitter=None, random_samples=False, show_predictions=False,
-                           readout_threshold=None, show_input_class=True, input_heatmap=False, pal=None, n_colors=20):
+                           readout_threshold=None, show_input_class=True, input_heatmap=False, pal=None, n_colors=20,
+                           x_min=None, x_max=None):
     """ Plot an activity snapshot
 
     Args:
@@ -102,6 +103,7 @@ def plot_activity_snapshot(model, data=None, labels=None, pred=None, nb_samples=
     hid_groups = [g.get_flattened_out_sequence().detach().cpu().numpy()
                   for g in hidden_groups]
     out_group = model.out.detach().cpu().numpy()
+    
     idx = np.arange(len(in_group))
 
     if random_samples:
@@ -143,18 +145,20 @@ def plot_activity_snapshot(model, data=None, labels=None, pred=None, nb_samples=
             ax.imshow(in_group[k].T, aspect="auto", origin="lower", extent=(
                 0, shape[0]*time_step, 0, shape[1]))
         ax.axis("off")
+        ax.set_xlim(x_min, x_max)
 
         # Plot scatter plots
         if i == 0:
             ax.text(-0.15, 0.5, "Input", text_props, color="black",
                     transform=ax.transAxes, fontsize=8, rotation=90)
-            add_xscalebar(ax, 10e-3, label="10ms", pos=(0.0, -0.2), fontsize=8)
+            add_xscalebar(ax, 1, label="1s", pos=(0.0, -0.2), fontsize=8)
 
         for h in range(nb_groups):
             ax = plt.subplot(gs[i+(nb_groups-h)*nb_samples], sharex=a0)
             dense2scatter_plot(ax, hid_groups[h][k], marker=marker, point_size=point_size,
                                alpha=point_alpha, time_step=time_step, color="black", jitter=time_jitter)
             ax.axis("off")
+            ax.set_xlim(x_min, x_max)
             if i == 0:
                 label = "Hidden"
                 if hidden_groups[h].name is not None:
@@ -197,6 +201,136 @@ def plot_activity_snapshot(model, data=None, labels=None, pred=None, nb_samples=
 
         ax.set_xlabel("Time (s)")
         ax.axis("off")
+        ax.set_xlim(x_min, x_max)
+        if i == 0:
+            ax.set_ylabel("Readout ampl.")
+
+    plt.tight_layout()
+    sns.despine()
+
+
+def indexed_snapshot(model, data=None, labels=None, pred=None, nb_samples=5, plot_groups=None, marker=".",
+                     point_size=5, point_alpha=1.0, time_jitter=None, random_samples=False, idx=None,
+                     show_predictions=False, readout_threshold=None, show_input_class=True, input_heatmap=False,
+                     pal=None, n_colors=20, x_min=None, x_max=None):
+
+    if data is not None:
+        data = datasets.DatasetView(data, idx)
+        pred = model.predict(data)
+        
+    pred = pred[idx]
+    time_step = model.time_step
+
+    if plot_groups is None:
+        hidden_groups = model.groups[1:-1]
+    else:
+        hidden_groups = plot_groups
+
+    nb_groups = len(hidden_groups)
+    nb_total_units = np.sum([g.nb_units for g in hidden_groups])
+    hr = [1] + [4*g.nb_units/nb_total_units for g in hidden_groups] + [1]
+    hr = list(reversed(hr))  # since we are plotting from bottom to top
+    gs = GridSpec(2+nb_groups, nb_samples, height_ratios=hr)
+
+    in_group = model.input_group.get_flattened_out_sequence().detach().cpu().numpy()
+    print(in_group.shape)
+    hid_groups = [g.get_flattened_out_sequence().detach().cpu().numpy()
+                  for g in hidden_groups]
+    out_group = model.out.detach().cpu().numpy()
+    
+    #idx = np.arange(len(in_group))
+
+    text_props = {'ha': 'center', 'va': 'center', 'fontsize': 8}
+    for i in range(nb_samples):
+        if i == 0:
+            a0 = ax = plt.subplot(gs[i+(nb_groups+1)*nb_samples])
+        else:
+            ax = plt.subplot(gs[i+(nb_groups+1)*nb_samples],
+                             sharex=a0, sharey=a0)
+
+        k = idx[i]
+        color = "black"
+
+        # COLOR CHOICES
+        if pal is None:
+            if n_colors <= 10:
+                colors = ['#CC6677', '#332288', '#DDCC77', '#117733', '#88CCEE',
+                          '#882255', '#44AA99', '#999933', '#AA4499', '#EE8866']
+                pal = sns.color_palette(colors, n_colors=n_colors)
+
+            else:
+                pal = sns.color_palette("muted", n_colors=n_colors)
+
+        # Colored input class
+        if show_input_class and data is not None:
+            clipped = np.clip(labels, 0, len(pal)-1)
+            color = pal[int(clipped[k])]
+        else:
+            color = "black"
+
+        if not input_heatmap:
+            dense2scatter_plot(ax, in_group[k], marker=marker, point_size=point_size,
+                               alpha=point_alpha, time_step=time_step, color=color, jitter=time_jitter)
+        else:
+            shape = in_group[k].shape
+            ax.imshow(in_group[k].T, aspect="auto", origin="lower", extent=(
+                0, shape[0]*time_step, 0, shape[1]))
+        ax.axis("off")
+        ax.set_xlim(x_min, x_max)
+
+        # Plot scatter plots
+        if i == 0:
+            ax.text(-0.15, 0.5, "Input", text_props, color="black", transform=ax.transAxes, fontsize=8, rotation=90)
+            add_xscalebar(ax, 1, label="1s", pos=(0.0, -0.2), fontsize=8)
+
+        for h in range(nb_groups):
+            ax = plt.subplot(gs[i+(nb_groups-h)*nb_samples], sharex=a0)
+            dense2scatter_plot(ax, hid_groups[h][k], marker=marker, point_size=point_size,
+                               alpha=point_alpha, time_step=time_step, color="black", jitter=time_jitter)
+            ax.axis("off")
+            ax.set_xlim(x_min, x_max)
+            if i == 0:
+                label = "Hidden"
+                if hidden_groups[h].name is not None:
+                    label = hidden_groups[h].name
+                else:
+                    if nb_groups > 1:
+                        label = "Hid. %i" % (h+1)
+                ax.text(-0.15, 0.5, label, text_props, color="black",
+                        transform=ax.transAxes, fontsize=8, rotation=90)
+
+        # Readout neurons
+        if i == 0:
+            ax0out = ax = plt.subplot(gs[i], sharex=a0)
+            ax.text(-0.15, 0.5, "Readout", text_props, color="black",
+                    transform=ax.transAxes, fontsize=8, rotation=90)
+        else:
+            ax = plt.subplot(gs[i], sharex=a0, sharey=ax0out)
+
+        times = np.arange(len(out_group[k]))*time_step
+
+        for line_index, ro_line in enumerate(np.transpose(out_group[k])):
+            if labels is not None:
+                if line_index != int(labels[k]):
+                    color = '#DDDDDD'
+                    zorder = 5
+                else:
+                    color = pal[line_index]
+                    zorder = 10
+            else:
+                color = "black"
+            ax.plot(times, ro_line, color=color, zorder=zorder, lw=1)
+
+        if readout_threshold is not None:
+            ax.axhline(readout_threshold, alpha=1.0,
+                       color="black", ls='dashed', lw=0.5)
+
+        if show_predictions:
+            ax.text(0.5, 0.8, "Pred: %i" % pred[k], color="black", transform=ax.transAxes, fontsize=8)
+
+        ax.set_xlabel("Time (s)")
+        ax.axis("off")
+        ax.set_xlim(x_min, x_max)
         if i == 0:
             ax.set_ylabel("Readout ampl.")
 
