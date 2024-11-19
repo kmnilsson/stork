@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+
+import torch.nn.functional as F
 from torch.nn import Parameter
 
 from stork import activations
@@ -14,8 +16,8 @@ class LIFGroup(CellGroup):
                  diff_reset=False,
                  learn_tau_mem=False,
                  learn_tau_syn=False,
-                 learn_tau_mem_hetero=False,
-                 learn_tau_syn_hetero=False,
+                 tau_mem_hetero=False,
+                 tau_syn_hetero=False,
                  clamp_mem=False,
                  activation=activations.SuperSpike,
                  dropout_p=0.0,
@@ -57,8 +59,8 @@ class LIFGroup(CellGroup):
         self.diff_reset = diff_reset
         self.learn_tau_mem = learn_tau_mem
         self.learn_tau_syn = learn_tau_syn
-        self.learn_tau_mem_hetero = learn_tau_mem_hetero
-        self.learn_tau_syn_hetero = learn_tau_syn_hetero
+        self.tau_mem_hetero = tau_mem_hetero
+        self.tau_syn_hetero = tau_syn_hetero
         self.clamp_mem = clamp_mem
         self.mem = None
         self.syn = None
@@ -70,7 +72,7 @@ class LIFGroup(CellGroup):
         self.scl_syn = 1.0 - self.dcy_syn
         
         if self.learn_tau_mem:
-            if self.learn_tau_mem_hetero:
+            if self.tau_mem_hetero:
                 mem_param_shape = self.shape
             else:
                 mem_param_shape = 1
@@ -79,7 +81,7 @@ class LIFGroup(CellGroup):
             self.mem_param = Parameter(mem_param, requires_grad=self.learn_tau_mem)
         
         if self.learn_tau_syn:
-            if self.learn_tau_syn_hetero:
+            if self.tau_syn_hetero:
                 syn_param_shape = self.shape
             else:
                 syn_param_shape = 1
@@ -93,12 +95,12 @@ class LIFGroup(CellGroup):
         super().reset_state(batch_size)
         if self.learn_tau_mem:
             time_step = torch.tensor(self.time_step, device=self.device, dtype=self.dtype)
-            self.dcy_mem = torch.exp(-time_step / (self.tau_mem * torch.nn.functional.softplus(self.mem_param)))
+            self.dcy_mem = torch.exp(-time_step / (self.tau_mem * F.softplus(self.mem_param)))
             self.scl_mem = 1.0 - self.dcy_mem
         if self.learn_tau_syn:
             if 'time_step' not in locals():
                 time_step = torch.tensor(self.time_step, device=self.device, dtype=self.dtype)
-            self.dcy_syn = torch.exp(-time_step / (self.tau_syn * torch.nn.functional.softplus(self.syn_param)))
+            self.dcy_syn = torch.exp(-time_step / (self.tau_syn * F.softplus(self.syn_param)))
             self.scl_syn = 1.0 - self.dcy_syn
         self.mem = self.get_state_tensor("mem", state=self.mem)
         self.syn = self.get_state_tensor("syn", state=self.syn)
