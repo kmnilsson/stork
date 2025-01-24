@@ -18,7 +18,9 @@ class SEAdLIFGroup(EFLIFGroup):
 
         a = torch.rand(self.shape, device=device, dtype=dtype, requires_grad=True)
         b = torch.rand(self.shape, device=device, dtype=dtype, requires_grad=True)
+        
         ada_param = torch.randn(self.shape, device=device, dtype=dtype, requires_grad=True)
+        ada_param = ada_param / 4 + 1
         
         self.a = Parameter(a, requires_grad=True)
         self.b = Parameter(b, requires_grad=True)
