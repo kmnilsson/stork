@@ -8,13 +8,14 @@ import numpy as np
 
 from . import connections
 from . import layers
+from . import nodes
 
 from .utils import get_lif_kernel
 
 # FUNCTIONS
 # # # # # # # # # #
 
-def _get_epsilon(calc_mode, tau_mem, tau_syn, timestep=1e-3):
+def _get_epsilon(calc_mode, tau_mem, tau_syn=None, timestep=1e-3):
     if calc_mode == 'analytical':
         return _epsilon_analytical(tau_mem, tau_syn)
 
@@ -24,11 +25,19 @@ def _get_epsilon(calc_mode, tau_mem, tau_syn, timestep=1e-3):
     else:
         raise ValueError('invalid calc mode for epsilon')
 
-def _epsilon_analytical(tau_mem, tau_syn):
+def _epsilon_analytical(tau_mem, tau_syn=None):
+    if tau_syn is None:
+        # using delta synapses
+        epsilon_bar = tau_mem
+        epsilon_hat = tau_mem / 2
+
+        return epsilon_bar, epsilon_hat
+
     epsilon_bar = tau_syn
     epsilon_hat = (tau_syn ** 2) / (2 * (tau_syn + tau_mem))
 
     return epsilon_bar, epsilon_hat
+
 
 def _epsilon_numerical(tau_mem, tau_syn, timestep):
     kernel = get_lif_kernel(tau_mem, tau_syn, timestep)
@@ -268,13 +277,19 @@ class FluctuationDrivenNormalInitializer(Initializer):
         
     def _calc_epsilon(self, dst):
         """
-        Calculates epsilon_bar and epsilon_hat, the integrals of the PSP kernel from a target 
+        Calculates epsilon_bar and epsilon_hat, the integrals of the PSP kernel from a target
         neuron group `dst`
-        """        
-        ebar, ehat = _get_epsilon(self.epsilon_calc_mode, 
-                                  dst.tau_mem, 
-                                  dst.tau_syn, 
-                                  self.timestep)
+        """
+        tau_mem = dst.tau_mem
+        if isinstance(dst, nodes.DeltaSynapseLIFGroup):
+            tau_syn = None
+            self.epsilon_calc_mode = 'analytical'
+        else:
+            tau_syn = dst.tau_syn
+        ebar, ehat = _get_epsilon(self.epsilon_calc_mode,
+                                tau_mem,
+                                tau_syn,
+                                self.timestep)
 
         return ebar, ehat
 
