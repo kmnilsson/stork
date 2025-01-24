@@ -347,7 +347,7 @@ class SumOverTimeMSE(LossStack):
         return loss_value
 
     def predict(self, output):
-        return output  # here we just return the network output
+        return torch.sum(output, self.time_dim)
 
     def __call__(self, output, targets):
         return self.compute_loss(output, targets)
@@ -377,7 +377,38 @@ class MeanOverTimeMSE(LossStack):
         return loss_value
 
     def predict(self, output):
-        return output  # here we just return the network output
+        return torch.mean(output, self.time_dim)
+    
+    def __call__(self, output, targets):
+        return self.compute_loss(output, targets)
+
+
+class MeanOverTimeRMSE(LossStack):
+
+    def __init__(self, time_dimension=1):
+        super().__init__()
+        self.mse_loss = nn.MSELoss()
+        self.time_dim = time_dimension
+
+    def get_metric_names(self):
+        return ["pcc", "srcc"]
+
+    def compute_loss(self, output, target):
+        """ Computes RMSE loss between output and target. """
+        mot = torch.mean(output, self.time_dim) # Mean over time
+        target = target.unsqueeze(1).float()    # Add a dimension and typecast        
+        
+        mse = self.mse_loss(mot, target)
+        loss_value = torch.sqrt(mse)
+        pcc = pearson_corrcoef(mot, target)
+        srcc = spearman_corrcoef(mot, target)
+        
+        self.metrics = [pcc.item(),
+                        srcc.item()]
+        return loss_value
+
+    def predict(self, output):
+        return torch.mean(output, self.time_dim)
 
     def __call__(self, output, targets):
         return self.compute_loss(output, targets)
